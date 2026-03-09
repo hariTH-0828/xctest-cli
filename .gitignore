@@ -1,0 +1,17 @@
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+
+# Swift / SPM
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj
+xcuserdata/
+DerivedData/
+
+# xctest-cli output
+.xctest-cli/
+reports/

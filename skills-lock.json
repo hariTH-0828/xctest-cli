@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "vapor": {
+      "source": "ar4mirez/samuel",
+      "sourceType": "github",
+      "computedHash": "9c251ac2c6f4c42bf53dcc1a0d7bfb21ea1b747b1a967990828e1c39b5f824f3"
+    }
+  }
+}
