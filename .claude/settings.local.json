@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(swift build)",
+      "Bash(swift run xctest-cli --help)",
+      "Bash(swift run xctest-cli run --help)",
+      "Bash(timeout 5 swift run xctest-cli serve --report reports/latest.json --port 9090)",
+      "Bash(swift run xctest-cli parse .xctest-cli/TestResults.xcresult --output reports/parsed.json)",
+      "Bash(swift run xctest-cli run /Users/hari-19343/Documents/learning/practice_code/UserApp/UserApp.xcodeproj --scheme UserApp --destination \"platform=iOS Simulator,name=iPhone 17\" --serve --port 9090)",
+      "Bash(curl -s http://127.0.0.1:9090/api/live)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://127.0.0.1:9090/api/report)",
+      "Bash(xcodebuild test -project /Users/hari-19343/Documents/learning/practice_code/UserApp/UserApp.xcodeproj -scheme UserApp -destination \"platform=iOS Simulator,name=iPhone 17\" -only-testing UserAppTests)",
+      "Bash(swift run xctest-cli run /Users/hari-19343/Documents/learning/practice_code/UserApp/UserApp.xcodeproj --scheme UserApp --destination \"platform=iOS Simulator,name=iPhone 17\" --serve --port 9091)",
+      "Bash(curl -s http://127.0.0.1:9091/api/live)",
+      "mcp__Claude_Preview__preview_start"
+    ]
+  }
+}

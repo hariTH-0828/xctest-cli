@@ -11,6 +11,8 @@ final class LiveTestState: @unchecked Sendable {
     private var _phase: Phase = .idle
     private var _testCases: [LiveTestCase] = []
     private var _currentTest: String?
+    private var _currentFile: String?
+    private var _currentSuite: String?
     private var _startTime: Date?
     private var _scheme: String = ""
 
@@ -27,12 +29,16 @@ final class LiveTestState: @unchecked Sendable {
         let status: TestStatus
         let duration: Double
         let failureMessage: String?
+        let file: String?
+        let line: Int?
     }
 
     struct Snapshot: Codable {
         let phase: String
         let scheme: String
         let currentTest: String?
+        let currentFile: String?
+        let currentSuite: String?
         let passed: Int
         let failed: Int
         let skipped: Int
@@ -49,6 +55,8 @@ final class LiveTestState: @unchecked Sendable {
         _phase = .idle
         _testCases = []
         _currentTest = nil
+        _currentFile = nil
+        _currentSuite = nil
         _startTime = Date()
         _scheme = scheme
     }
@@ -57,6 +65,18 @@ final class LiveTestState: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         _phase = phase
+    }
+
+    func setCurrentFile(_ file: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        _currentFile = file
+    }
+
+    func setCurrentSuite(_ suite: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        _currentSuite = suite
     }
 
     func testStarted(_ name: String) {
@@ -83,6 +103,8 @@ final class LiveTestState: @unchecked Sendable {
             phase: _phase.rawValue,
             scheme: _scheme,
             currentTest: _currentTest,
+            currentFile: _currentFile,
+            currentSuite: _currentSuite,
             passed: _testCases.filter { $0.status == .passed }.count,
             failed: _testCases.filter { $0.status == .failed }.count,
             skipped: _testCases.filter { $0.status == .skipped }.count,

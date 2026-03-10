@@ -1,0 +1,23 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test -project /Users/hari-19343/Documents/learning/practice_code/UserApp/UserApp.xcodeproj -scheme UserApp -destination "platform=iOS Simulator,name=iPhone 16" -only-testing UserAppTests
+
+Resolve Package Graph
+
+
+Resolved source packages:
+  Alamofire: https://github.com/Alamofire/Alamofire.git @ 5.11.1
+
+2026-03-10 10:46:37.670 xcodebuild[90176:1457071] [MT] IDERunDestination: Supported platforms for the buildables in the current scheme is empty.
+2026-03-10 10:47:38.156 xcodebuild[90176:1457071] Writing error result bundle to /var/folders/1r/2539fx512bd_lb00nszfk0gr0000gp/T/ResultBundle_2026-10-03_10-47-0038.xcresult
+xcodebuild: error: Unable to find a device matching the provided destination specifier:
+		{ platform:iOS Simulator, OS:latest, name:iPhone 16 }
+
+	The requested device could not be found because no available devices matched the request.
+
+	Available destinations for the "UserApp" scheme:
+		{ platform:iOS, arch:arm64, id:00008101-000930D93AA2601E, name:Hari-19343-Test-IPad }
+		{ platform:iOS, arch:arm64, id:00008120-000A41260144A01E, name:Hariharan-test }
+		{ platform:iOS, id:dvtdevice-DVTiPhonePlaceholder-iphoneos:placeholder, name:Any iOS Device }
+		{ platform:iOS Simulator, id:dvtdevice-DVTiOSDeviceSimulatorPlaceholder-iphonesimulator:placeholder, name:Any iOS Simulator Device }
+		{ platform:iOS Simulator, arch:arm64, id:E03898C0-1A7C-4945-9104-1A4A12ECC00A, OS:26.2, name:iPhone 17 }
+		{ platform:iOS Simulator, arch:x86_64, id:E03898C0-1A7C-4945-9104-1A4A12ECC00A, OS:26.2, name:iPhone 17 }

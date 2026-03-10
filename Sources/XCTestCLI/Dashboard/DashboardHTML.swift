@@ -29,6 +29,15 @@ enum DashboardHTML {
                 <span class="live-elapsed" id="live-elapsed"></span>
             </div>
 
+            <div class="current-activity hidden" id="current-activity">
+                <div class="activity-file" id="activity-file"></div>
+                <div class="activity-method">
+                    <span class="activity-indicator"></span>
+                    <span id="activity-method-name"></span>
+                </div>
+                <div class="activity-suite" id="activity-suite"></div>
+            </div>
+
             <div class="summary-cards" id="summary-cards">
                 <div class="card card-total">
                     <div class="card-value" id="total-count">—</div>
@@ -366,6 +375,64 @@ enum DashboardHTML {
         font-size: 14px;
     }
 
+    /* Current Activity Panel */
+    .current-activity {
+        background: linear-gradient(135deg, #0d2137, #111b27);
+        border: 1px solid #1f6feb44;
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        animation: liveFadeIn 0.3s ease;
+    }
+    .current-activity.hidden { display: none; }
+    .activity-file {
+        font-family: 'SF Mono', Menlo, monospace;
+        font-size: 13px;
+        color: #8b949e;
+        margin-bottom: 8px;
+    }
+    .activity-method {
+        font-family: 'SF Mono', Menlo, monospace;
+        font-size: 16px;
+        color: #f0f6fc;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .activity-indicator {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #58a6ff;
+        animation: livePulse 1.5s ease-in-out infinite;
+        flex-shrink: 0;
+    }
+    .activity-suite {
+        font-size: 12px;
+        color: #6e7681;
+        margin-top: 6px;
+    }
+
+    /* Inline failure details for live tests */
+    .test-row-failure {
+        padding: 6px 20px 10px 52px;
+        background: #1a0f10;
+        border-bottom: 1px solid #21262d;
+        font-family: 'SF Mono', Menlo, monospace;
+        font-size: 12px;
+    }
+    .test-row-failure .failure-msg {
+        color: #f85149;
+        margin-bottom: 4px;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+    .test-row-failure .failure-location {
+        color: #6e7681;
+        font-size: 11px;
+    }
+
     .live-banner {
         display: flex;
         align-items: center;
@@ -419,7 +486,7 @@ enum DashboardHTML {
 
         async function pollLive() {
             try {
-                const res = await fetch('/api/live');
+                const res = await fetch('/api/live?_=' + new Date().getTime(), { cache: 'no-store' });
                 if (!res.ok) return;
                 liveData = await res.json();
 
@@ -440,20 +507,50 @@ enum DashboardHTML {
                 banner.classList.remove('hidden');
                 dot.className = 'live-dot';
 
+                var activityPanel = document.getElementById('current-activity');
+
                 if (liveData.phase === 'building') {
                     phase.textContent = '🔨 Building...';
                     dot.classList.add('building');
-                    current.textContent = '';
+                    current.textContent = liveData.currentFile ? liveData.currentFile : '';
                     stats.textContent = '';
+                    activityPanel.classList.add('hidden');
+
+                    // Clear old results while building
+                    if (reportData || document.getElementById('total-count').textContent !== '—') {
+                        reportData = null;
+                        document.getElementById('test-suites').innerHTML = '<p class="loading">🔨 Building project...</p>';
+                        document.getElementById('total-count').textContent = '—';
+                        document.getElementById('passed-count').textContent = '—';
+                        document.getElementById('failed-count').textContent = '—';
+                        document.getElementById('skipped-count').textContent = '—';
+                        document.getElementById('duration-value').textContent = '—';
+                        document.getElementById('progress-passed').style.width = '0%';
+                        document.getElementById('progress-failed').style.width = '0%';
+                        document.getElementById('progress-skipped').style.width = '0%';
+                        document.getElementById('timestamp').textContent = 'Live — ' + liveData.scheme;
+                    }
                 } else if (liveData.phase === 'testing') {
                     phase.textContent = '🧪 Testing';
                     current.textContent = liveData.currentTest ? '→ ' + liveData.currentTest : '';
                     stats.textContent = '✅ ' + liveData.passed + '  ❌ ' + liveData.failed + '  📊 ' + liveData.totalCompleted;
+
+                    // Update current activity panel
+                    if (liveData.currentTest) {
+                        activityPanel.classList.remove('hidden');
+                        document.getElementById('activity-file').textContent = liveData.currentFile || '';
+                        document.getElementById('activity-method-name').textContent = liveData.currentTest;
+                        document.getElementById('activity-suite').textContent = liveData.currentSuite
+                            ? 'Suite: ' + liveData.currentSuite : '';
+                    } else {
+                        activityPanel.classList.add('hidden');
+                    }
                 } else if (liveData.phase === 'done') {
                     phase.textContent = '🏁 Done';
                     dot.classList.add('done');
                     current.textContent = '';
                     stats.textContent = '✅ ' + liveData.passed + '  ❌ ' + liveData.failed + '  📊 ' + liveData.totalCompleted;
+                    activityPanel.classList.add('hidden');
                     // Load final report
                     setTimeout(loadReport, 500);
                 }
@@ -468,11 +565,13 @@ enum DashboardHTML {
         }
 
         function renderLiveTests() {
-            if (!liveData || !liveData.testCases || liveData.testCases.length === 0) return;
+            if (!liveData) return;
+            if ((!liveData.testCases || liveData.testCases.length === 0) && !liveData.currentTest) return;
 
             // Group by suite
             const suiteMap = {};
-            for (const tc of liveData.testCases) {
+            const activeTestCases = liveData.testCases || [];
+            for (const tc of activeTestCases) {
                 const sn = tc.suiteName || 'Tests';
                 if (!suiteMap[sn]) suiteMap[sn] = [];
                 suiteMap[sn].push(tc);
@@ -536,7 +635,24 @@ enum DashboardHTML {
                     if (tc.duration !== undefined) {
                         html += '<span class="test-duration">' + tc.duration.toFixed(3) + 's</span>';
                     }
+                    if (tc.failureMessage) {
+                        html += '<span class="test-failure-hint">' + escapeHtml(tc.failureMessage.split('\\n')[0]) + '</span>';
+                    }
                     html += '</div>';
+
+                    // Inline failure details for failed tests
+                    if (tc.status === 'failed' && (tc.failureMessage || tc.file)) {
+                        html += '<div class="test-row-failure">';
+                        if (tc.failureMessage) {
+                            html += '<div class="failure-msg">' + escapeHtml(tc.failureMessage) + '</div>';
+                        }
+                        if (tc.file) {
+                            var fileName = tc.file.split('/').pop();
+                            var location = fileName + (tc.line ? ':' + tc.line : '');
+                            html += '<div class="failure-location">' + escapeHtml(location) + '</div>';
+                        }
+                        html += '</div>';
+                    }
                 }
 
                 html += '</div></div>';
@@ -545,9 +661,13 @@ enum DashboardHTML {
             if (liveData.currentTest) {
                 html += '<div class="test-suite">';
                 html += '<div class="suite-header">';
-                html += '<span class="suite-name">⏳ Running</span></div>';
+                html += '<span class="suite-name">⏳ Running</span>';
+                if (liveData.currentSuite) {
+                    html += '<span class="suite-stats" style="color:#8b949e;">' + escapeHtml(liveData.currentSuite) + '</span>';
+                }
+                html += '</div>';
                 html += '<div class="test-list">';
-                html += '<div class="test-row"><span class="status-icon" style="color:#d29922;">●</span>';
+                html += '<div class="test-row"><span class="status-icon" style="background:#1a2332;color:#58a6ff;">●</span>';
                 html += '<span class="test-name">' + escapeHtml(liveData.currentTest) + '</span>';
                 html += '<span class="test-duration" style="color:#d29922;">running...</span></div>';
                 html += '</div></div>';
@@ -718,13 +838,17 @@ enum DashboardHTML {
             URL.revokeObjectURL(url);
         });
 
-        // Poll live status every 2 seconds
-        setInterval(pollLive, 2000);
+        // Poll live status every second for responsive updates
+        setInterval(pollLive, 1000);
         // Refresh final report every 10 seconds
         setInterval(function() { if (!isLive) loadReport(); }, 10000);
+        
         // Initial load
-        pollLive();
-        loadReport();
+        pollLive().then(function() {
+            if (!isLive || liveData?.phase === 'done') {
+                loadReport();
+            }
+        });
     })();
     """
 }

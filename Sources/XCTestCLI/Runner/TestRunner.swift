@@ -156,6 +156,11 @@ struct TestRunner {
         var currentSuiteName = ""
         var testStartDate = Date()
 
+        // Buffer failure detail lines between test start → test end
+        var pendingFailureLines: [String] = []
+        var pendingFailureFile: String?
+        var pendingFailureLine: Int?
+
         // Stream output line-by-line for real-time progress
         let fileHandle = pipe.fileHandleForReading
         var buffer = Data()
@@ -180,32 +185,57 @@ struct TestRunner {
                         tracker.update(phase: .building)
                         live.setPhase(.building)
                     }
+                    // Track file being compiled: "Compiling SomeFile.swift"
+                    if trimmed.hasPrefix("Compiling ") {
+                        let fileName = String(trimmed.dropFirst("Compiling ".count))
+                        live.setCurrentFile(fileName)
+                    }
                 }
 
                 // Track current test suite
-                if trimmed.hasPrefix("Test Suite '") && trimmed.contains("started") {
-                    // "Test Suite 'MyTests' started at 2026-03-09..."
+                // Old: "Test Suite 'MyTests' started at 2026-03-09..."
+                // New: "Test suite 'MyTests' started on 'Device'"
+                let trimmedLower = trimmed.lowercased()
+                if trimmedLower.hasPrefix("test suite '") && trimmedLower.contains("started") {
                     if let start = trimmed.range(of: "'"),
                        let end = trimmed.range(of: "'", range: trimmed.index(after: start.lowerBound)..<trimmed.endIndex) {
                         let suiteName = String(trimmed[start.upperBound..<end.lowerBound])
                         if !suiteName.contains(".") && suiteName != "All tests" && suiteName != "Selected tests" {
                             currentSuiteName = suiteName
+                            live.setCurrentSuite(suiteName)
                         }
                     }
                 }
 
                 // Detect test started
-                if trimmed.hasPrefix("Test Case '-[") && trimmed.contains("began") {
+                // Old: "Test Case '-[Module.Class method]' started."
+                // New: "Test case 'Class.method()' started on 'Device'"
+                if trimmedLower.hasPrefix("test case") && trimmedLower.contains("started") {
                     let testName = parseTestName(from: trimmed)
                     tracker.update(phase: .testing)
                     tracker.testStarted(testName)
                     live.setPhase(.testing)
                     live.testStarted(testName)
                     testStartDate = Date()
+                    // Reset failure buffer for this test
+                    pendingFailureLines = []
+                    pendingFailureFile = nil
+                    pendingFailureLine = nil
+                }
+
+                // Capture failure detail lines (appear between test start and test fail)
+                // Old: /path/to/File.swift:42: error: -[Module.Class method] : message
+                // New: may vary; also check for generic "error:" pattern with file path
+                if let failure = Self.parseFailureLine(trimmed) {
+                    pendingFailureLines.append(failure.message)
+                    if pendingFailureFile == nil {
+                        pendingFailureFile = failure.file
+                        pendingFailureLine = failure.line
+                    }
                 }
 
                 // Detect test passed
-                if trimmed.hasPrefix("Test Case '-[") && trimmed.contains("passed") {
+                if trimmedLower.hasPrefix("test case") && trimmedLower.contains("passed") {
                     let testName = parseTestName(from: trimmed)
                     let duration = parseDuration(from: trimmed) ?? Date().timeIntervalSince(testStartDate)
                     tracker.testPassed(testName)
@@ -214,22 +244,33 @@ struct TestRunner {
                         suiteName: currentSuiteName,
                         status: .passed,
                         duration: duration,
-                        failureMessage: nil
+                        failureMessage: nil,
+                        file: nil,
+                        line: nil
                     ))
+                    pendingFailureLines = []
+                    pendingFailureFile = nil
+                    pendingFailureLine = nil
                 }
 
                 // Detect test failed
-                if trimmed.hasPrefix("Test Case '-[") && trimmed.contains("failed") {
+                if trimmedLower.hasPrefix("test case") && trimmedLower.contains("failed") {
                     let testName = parseTestName(from: trimmed)
                     let duration = parseDuration(from: trimmed) ?? Date().timeIntervalSince(testStartDate)
+                    let failureMsg = pendingFailureLines.isEmpty ? nil : pendingFailureLines.joined(separator: "\n")
                     tracker.testFailed(testName)
                     live.testCompleted(LiveTestState.LiveTestCase(
                         name: testName,
                         suiteName: currentSuiteName,
                         status: .failed,
                         duration: duration,
-                        failureMessage: nil
+                        failureMessage: failureMsg,
+                        file: pendingFailureFile,
+                        line: pendingFailureLine
                     ))
+                    pendingFailureLines = []
+                    pendingFailureFile = nil
+                    pendingFailureLine = nil
                 }
 
                 // Print important summary lines as-is
@@ -275,32 +316,73 @@ struct TestRunner {
         return config.resultBundlePath
     }
 
-    /// Extract test name from xcodebuild output like:
-    /// `Test Case '-[MyAppTests.LoginTests testExample]' started.`
+    /// Extract test name from xcodebuild output.
+    /// Old format: `Test Case '-[MyAppTests.LoginTests testExample]' started.`
+    /// New format: `Test case 'UserAppTests.testDetailEndpoint()' passed on 'Device' (0.001 seconds)`
     private static func parseTestName(from line: String) -> String {
-        // Extract content between '-[' and ']'
-        guard let start = line.range(of: "-["),
-              let end = line.range(of: "]'") else {
-            return line
+        // Try old format first: content between '-[' and ']'
+        if let start = line.range(of: "-["),
+           let end = line.range(of: "]'") {
+            let raw = String(line[start.upperBound..<end.lowerBound])
+            let parts = raw.split(separator: " ", maxSplits: 1)
+            if parts.count == 2 {
+                let classPath = String(parts[0])
+                let method = String(parts[1])
+                let className = classPath.components(separatedBy: ".").last ?? classPath
+                return "\(className).\(method)()"
+            }
+            return raw
         }
-        let raw = String(line[start.upperBound..<end.lowerBound]) // "MyAppTests.LoginTests testExample"
-        // Convert "Module.Class method" → "Class.method"
-        let parts = raw.split(separator: " ", maxSplits: 1)
-        if parts.count == 2 {
-            let classPath = String(parts[0])
-            let method = String(parts[1])
-            let className = classPath.components(separatedBy: ".").last ?? classPath
-            return "\(className).\(method)()"
-        }
+
+        // New format: extract content between first pair of single quotes
+        // "Test case 'ClassName.methodName()' passed on 'Device' (0.123 seconds)"
+        guard let firstQuote = line.firstIndex(of: "'") else { return line }
+        let afterFirst = line.index(after: firstQuote)
+        guard afterFirst < line.endIndex,
+              let secondQuote = line[afterFirst...].firstIndex(of: "'") else { return line }
+        let raw = String(line[afterFirst..<secondQuote]) // "UserAppTests.testDetailEndpoint()"
+
+        // Already in "Class.method()" format — return as-is
         return raw
     }
 
     /// Extract duration from xcodebuild output like:
-    /// `Test Case '...' passed (0.123 seconds).`
+    /// Old: `Test Case '...' passed (0.123 seconds).`
+    /// New: `Test case '...' passed on 'Device' (0.123 seconds)`
     private static func parseDuration(from line: String) -> Double? {
-        guard let start = line.range(of: "("),
-              let end = line.range(of: " seconds)") else { return nil }
-        return Double(line[start.upperBound..<end.lowerBound])
+        // Search for " seconds)" first, then find the matching "(" before it
+        guard let secEnd = line.range(of: " seconds)") else { return nil }
+        let prefix = line[line.startIndex..<secEnd.lowerBound]
+        guard let openParen = prefix.lastIndex(of: "(") else { return nil }
+        let numberStr = line[line.index(after: openParen)..<secEnd.lowerBound]
+        return Double(numberStr)
+    }
+
+    /// Parse failure detail from xcodebuild output.
+    /// Old: `/path/to/TestFile.swift:42: error: -[Module.Class method] : XCTAssertEqual failed: ...`
+    /// New: `/path/to/TestFile.swift:42: error: XCTAssertEqual failed: ...`
+    /// Returns (filePath, lineNumber, message) or nil if not a failure line.
+    private static func parseFailureLine(_ line: String) -> (file: String, line: Int, message: String)? {
+        // Look for ": error: " pattern which is common to both formats
+        guard let errorRange = line.range(of: ": error: ") else { return nil }
+
+        let prefix = String(line[line.startIndex..<errorRange.lowerBound])
+        // prefix is "/path/to/File.swift:42"
+        guard let lastColon = prefix.lastIndex(of: ":") else { return nil }
+        let filePath = String(prefix[prefix.startIndex..<lastColon])
+        let lineStr = String(prefix[prefix.index(after: lastColon)...])
+        guard let lineNum = Int(lineStr) else { return nil }
+        // Ensure the file path looks like a real path (not a timestamp or other colon-containing string)
+        guard filePath.hasSuffix(".swift") || filePath.hasSuffix(".m") || filePath.contains("/") else { return nil }
+
+        var message = String(line[errorRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Old format: strip the "-[Module.Class method] : " prefix from the message
+        if message.hasPrefix("-["), let msgStart = message.range(of: "] : ") {
+            message = String(message[msgStart.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return message.isEmpty ? nil : (filePath, lineNum, message)
     }
 }
 

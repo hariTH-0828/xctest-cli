@@ -189,8 +189,12 @@ struct RunCommand: AsyncParsableCommand {
             print("📱 Discovering simulators...")
             let simulators = InteractivePrompt.discoverSimulators()
             if simulators.isEmpty {
-                print("⚠ No iOS simulators found. Using default destination.")
-                resolvedDestination = "platform=iOS Simulator,name=iPhone 16"
+                print("⚠ No iOS simulators found. Using generic destination.")
+                resolvedDestination = "platform=iOS Simulator,name=Any iOS Simulator Device"
+                print()
+            } else if simulators.count == 1 {
+                resolvedDestination = simulators[0].destination
+                print("🎯 Using simulator: \(simulators[0])")
                 print()
             } else {
                 print()

@@ -5,12 +5,22 @@ enum InteractivePrompt {
 
     // MARK: - Generic selection
 
+    /// Returns true if stdin is connected to a terminal (interactive mode).
+    static var isInteractive: Bool {
+        isatty(STDIN_FILENO) != 0
+    }
+
     /// Display a numbered list and let the user pick one.
-    /// Returns the selected item.
+    /// Returns the selected item, or the first option if non-interactive.
     static func choose<T: CustomStringConvertible>(
         prompt: String,
         from options: [T]
     ) -> T {
+        guard isInteractive else {
+            print("\(prompt) (non-interactive, auto-selecting: \(options[0]))")
+            return options[0]
+        }
+
         print(prompt)
         for (i, option) in options.enumerated() {
             print("  \(i + 1)) \(option)")
@@ -31,11 +41,17 @@ enum InteractivePrompt {
 
     /// Display a numbered list and let the user pick one or more items.
     /// Input: comma-separated numbers or ranges (e.g. "1,3" or "1-3" or "all").
-    /// Returns the selected items.
+    /// Returns the selected items, or all options if non-interactive.
     static func chooseMultiple<T: CustomStringConvertible>(
         prompt: String,
         from options: [T]
     ) -> [T] {
+        guard isInteractive else {
+            let names = options.map { "\($0)" }.joined(separator: ", ")
+            print("\(prompt) (non-interactive, auto-selecting all: \(names))")
+            return options
+        }
+
         print(prompt)
         for (i, option) in options.enumerated() {
             print("  \(i + 1)) \(option)")
@@ -86,7 +102,12 @@ enum InteractivePrompt {
     }
 
     /// Ask a yes/no question. Returns true for yes.
+    /// Returns the default value if non-interactive.
     static func confirm(_ prompt: String, default defaultValue: Bool = false) -> Bool {
+        guard isInteractive else {
+            print("\(prompt) (non-interactive, using default: \(defaultValue ? "yes" : "no"))")
+            return defaultValue
+        }
         let hint = defaultValue ? "(Y/n)" : "(y/N)"
         print("\(prompt) \(hint): ", terminator: "")
         guard let line = readLine()?.trimmingCharacters(in: .whitespaces).lowercased() else {
