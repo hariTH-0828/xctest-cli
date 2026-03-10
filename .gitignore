@@ -7,6 +7,7 @@
 # Swift / SPM
 .build/
 .swiftpm/
+implementation_plan.md
 Package.resolved
 *.xcodeproj
 xcuserdata/

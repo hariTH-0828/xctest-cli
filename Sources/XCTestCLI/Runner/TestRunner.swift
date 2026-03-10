@@ -145,8 +145,16 @@ struct TestRunner {
 
         try process.run()
 
+        // Initialize live state
+        let live = LiveTestState.shared
+        live.reset(scheme: config.scheme)
+
         let tracker = ProgressTracker()
         tracker.update(phase: .preparing)
+
+        // Track current suite and test start time for duration
+        var currentSuiteName = ""
+        var testStartDate = Date()
 
         // Stream output line-by-line for real-time progress
         let fileHandle = pipe.fileHandleForReading
@@ -170,33 +178,65 @@ struct TestRunner {
                     || trimmed.hasPrefix("Ld ") || trimmed.hasPrefix("Build target") {
                     if tracker.phase == .preparing {
                         tracker.update(phase: .building)
+                        live.setPhase(.building)
+                    }
+                }
+
+                // Track current test suite
+                if trimmed.hasPrefix("Test Suite '") && trimmed.contains("started") {
+                    // "Test Suite 'MyTests' started at 2026-03-09..."
+                    if let start = trimmed.range(of: "'"),
+                       let end = trimmed.range(of: "'", range: trimmed.index(after: start.lowerBound)..<trimmed.endIndex) {
+                        let suiteName = String(trimmed[start.upperBound..<end.lowerBound])
+                        if !suiteName.contains(".") && suiteName != "All tests" && suiteName != "Selected tests" {
+                            currentSuiteName = suiteName
+                        }
                     }
                 }
 
                 // Detect test started
                 if trimmed.hasPrefix("Test Case '-[") && trimmed.contains("began") {
-                    // "Test Case '-[MyTests testExample]' started."
                     let testName = parseTestName(from: trimmed)
                     tracker.update(phase: .testing)
                     tracker.testStarted(testName)
+                    live.setPhase(.testing)
+                    live.testStarted(testName)
+                    testStartDate = Date()
                 }
 
                 // Detect test passed
                 if trimmed.hasPrefix("Test Case '-[") && trimmed.contains("passed") {
                     let testName = parseTestName(from: trimmed)
+                    let duration = parseDuration(from: trimmed) ?? Date().timeIntervalSince(testStartDate)
                     tracker.testPassed(testName)
+                    live.testCompleted(LiveTestState.LiveTestCase(
+                        name: testName,
+                        suiteName: currentSuiteName,
+                        status: .passed,
+                        duration: duration,
+                        failureMessage: nil
+                    ))
                 }
 
                 // Detect test failed
                 if trimmed.hasPrefix("Test Case '-[") && trimmed.contains("failed") {
                     let testName = parseTestName(from: trimmed)
+                    let duration = parseDuration(from: trimmed) ?? Date().timeIntervalSince(testStartDate)
                     tracker.testFailed(testName)
+                    live.testCompleted(LiveTestState.LiveTestCase(
+                        name: testName,
+                        suiteName: currentSuiteName,
+                        status: .failed,
+                        duration: duration,
+                        failureMessage: nil
+                    ))
                 }
 
                 // Print important summary lines as-is
                 if trimmed.contains("** TEST SUCCEEDED **") || trimmed.contains("** TEST FAILED **") {
                     tracker.update(phase: .done)
                     tracker.finish()
+                    live.setPhase(.done)
                     print(trimmed)
                 }
                 if trimmed.hasPrefix("Failing tests:") || (trimmed.hasPrefix("\t") && tracker.phase == .done) {
@@ -253,6 +293,14 @@ struct TestRunner {
             return "\(className).\(method)()"
         }
         return raw
+    }
+
+    /// Extract duration from xcodebuild output like:
+    /// `Test Case '...' passed (0.123 seconds).`
+    private static func parseDuration(from line: String) -> Double? {
+        guard let start = line.range(of: "("),
+              let end = line.range(of: " seconds)") else { return nil }
+        return Double(line[start.upperBound..<end.lowerBound])
     }
 }
 

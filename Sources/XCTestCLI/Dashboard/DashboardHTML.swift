@@ -21,6 +21,14 @@ enum DashboardHTML {
                 <p class="timestamp" id="timestamp"></p>
             </header>
 
+            <div class="live-banner hidden" id="live-banner">
+                <div class="live-dot"></div>
+                <span class="live-phase" id="live-phase">Preparing...</span>
+                <span class="live-current" id="live-current"></span>
+                <span class="live-stats" id="live-stats"></span>
+                <span class="live-elapsed" id="live-elapsed"></span>
+            </div>
+
             <div class="summary-cards" id="summary-cards">
                 <div class="card card-total">
                     <div class="card-value" id="total-count">—</div>
@@ -358,6 +366,35 @@ enum DashboardHTML {
         font-size: 14px;
     }
 
+    .live-banner {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px;
+        background: linear-gradient(135deg, #1a1e2e, #161b22);
+        border: 1px solid #1f6feb44;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        font-size: 14px;
+        animation: liveFadeIn 0.3s ease;
+    }
+    .live-banner.hidden { display: none; }
+    @keyframes liveFadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+    .live-dot {
+        width: 10px; height: 10px;
+        border-radius: 50%;
+        background: #3fb950;
+        animation: livePulse 1.5s ease-in-out infinite;
+        flex-shrink: 0;
+    }
+    .live-dot.building { background: #d29922; }
+    .live-dot.done { background: #8b949e; animation: none; }
+    @keyframes livePulse { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(63,185,80,0.4); } 50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(63,185,80,0); } }
+    .live-phase { color: #58a6ff; font-weight: 600; }
+    .live-current { color: #8b949e; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .live-stats { color: #c9d1d9; white-space: nowrap; }
+    .live-elapsed { color: #484f58; white-space: nowrap; }
+
     @media (max-width: 768px) {
         .controls { flex-direction: column; align-items: stretch; }
         .filters { justify-content: center; }
@@ -368,8 +405,156 @@ enum DashboardHTML {
     static let javascript: String = """
     (function() {
         let reportData = null;
+        let liveData = null;
+        let isLive = false;
         let currentFilter = 'all';
         let searchQuery = '';
+
+        // Format seconds → "1m 23s"
+        function formatElapsed(s) {
+            const m = Math.floor(s / 60);
+            const sec = Math.floor(s % 60);
+            return m > 0 ? m + 'm ' + sec + 's' : sec + 's';
+        }
+
+        async function pollLive() {
+            try {
+                const res = await fetch('/api/live');
+                if (!res.ok) return;
+                liveData = await res.json();
+
+                const banner = document.getElementById('live-banner');
+                const dot = banner.querySelector('.live-dot');
+                const phase = document.getElementById('live-phase');
+                const current = document.getElementById('live-current');
+                const stats = document.getElementById('live-stats');
+                const elapsed = document.getElementById('live-elapsed');
+
+                if (liveData.phase === 'idle') {
+                    banner.classList.add('hidden');
+                    isLive = false;
+                    return;
+                }
+
+                isLive = true;
+                banner.classList.remove('hidden');
+                dot.className = 'live-dot';
+
+                if (liveData.phase === 'building') {
+                    phase.textContent = '🔨 Building...';
+                    dot.classList.add('building');
+                    current.textContent = '';
+                    stats.textContent = '';
+                } else if (liveData.phase === 'testing') {
+                    phase.textContent = '🧪 Testing';
+                    current.textContent = liveData.currentTest ? '→ ' + liveData.currentTest : '';
+                    stats.textContent = '✅ ' + liveData.passed + '  ❌ ' + liveData.failed + '  📊 ' + liveData.totalCompleted;
+                } else if (liveData.phase === 'done') {
+                    phase.textContent = '🏁 Done';
+                    dot.classList.add('done');
+                    current.textContent = '';
+                    stats.textContent = '✅ ' + liveData.passed + '  ❌ ' + liveData.failed + '  📊 ' + liveData.totalCompleted;
+                    // Load final report
+                    setTimeout(loadReport, 500);
+                }
+
+                elapsed.textContent = '[' + formatElapsed(liveData.elapsed) + ']';
+
+                // Build a live report from live data to show in the dashboard
+                if (liveData.phase === 'testing' || (liveData.phase === 'done' && !reportData)) {
+                    renderLiveTests();
+                }
+            } catch(e) { /* ignore */ }
+        }
+
+        function renderLiveTests() {
+            if (!liveData || !liveData.testCases || liveData.testCases.length === 0) return;
+
+            // Group by suite
+            const suiteMap = {};
+            for (const tc of liveData.testCases) {
+                const sn = tc.suiteName || 'Tests';
+                if (!suiteMap[sn]) suiteMap[sn] = [];
+                suiteMap[sn].push(tc);
+            }
+
+            const liveSuites = Object.entries(suiteMap).map(([name, cases]) => ({ name, testCases: cases }));
+            const total = liveData.totalCompleted;
+            const summary = {
+                totalTests: total,
+                passed: liveData.passed,
+                failed: liveData.failed,
+                skipped: liveData.skipped,
+                duration: formatElapsed(liveData.elapsed)
+            };
+
+            // Update summary cards
+            document.getElementById('total-count').textContent = summary.totalTests;
+            document.getElementById('passed-count').textContent = summary.passed;
+            document.getElementById('failed-count').textContent = summary.failed;
+            document.getElementById('skipped-count').textContent = summary.skipped;
+            document.getElementById('duration-value').textContent = summary.duration;
+            document.getElementById('timestamp').textContent = 'Live — ' + liveData.scheme;
+
+            const t = total || 1;
+            document.getElementById('progress-passed').style.width = (summary.passed / t * 100) + '%';
+            document.getElementById('progress-failed').style.width = (summary.failed / t * 100) + '%';
+            document.getElementById('progress-skipped').style.width = (summary.skipped / t * 100) + '%';
+
+            // Render test suites
+            const container = document.getElementById('test-suites');
+            let html = '';
+            for (const suite of liveSuites) {
+                const filtered = suite.testCases.filter(tc => {
+                    if (currentFilter !== 'all' && tc.status !== currentFilter) return false;
+                    if (searchQuery) {
+                        const q = searchQuery.toLowerCase();
+                        return tc.name.toLowerCase().includes(q);
+                    }
+                    return true;
+                });
+                if (filtered.length === 0) continue;
+
+                const passed = filtered.filter(t => t.status === 'passed').length;
+                const failed = filtered.filter(t => t.status === 'failed').length;
+
+                html += '<div class="test-suite">';
+                html += '<div class="suite-header" onclick="toggleSuite(this)">';
+                html += '<span class="suite-name"><span class="chevron">▼</span> ' + escapeHtml(suite.name) + '</span>';
+                html += '<span class="suite-stats">';
+                if (passed) html += '<span class="stat-passed">' + passed + ' passed</span>';
+                if (failed) html += '<span class="stat-failed">' + failed + ' failed</span>';
+                html += '</span></div>';
+                html += '<div class="test-list">';
+
+                for (const tc of filtered) {
+                    const statusClass = 'status-' + tc.status;
+                    const icon = tc.status === 'passed' ? '✓' : tc.status === 'failed' ? '✗' : '⊘';
+                    html += '<div class="test-row">';
+                    html += '<span class="status-icon ' + statusClass + '">' + icon + '</span>';
+                    html += '<span class="test-name">' + escapeHtml(tc.name) + '</span>';
+                    if (tc.duration !== undefined) {
+                        html += '<span class="test-duration">' + tc.duration.toFixed(3) + 's</span>';
+                    }
+                    html += '</div>';
+                }
+
+                html += '</div></div>';
+            }
+
+            if (liveData.currentTest) {
+                html += '<div class="test-suite">';
+                html += '<div class="suite-header">';
+                html += '<span class="suite-name">⏳ Running</span></div>';
+                html += '<div class="test-list">';
+                html += '<div class="test-row"><span class="status-icon" style="color:#d29922;">●</span>';
+                html += '<span class="test-name">' + escapeHtml(liveData.currentTest) + '</span>';
+                html += '<span class="test-duration" style="color:#d29922;">running...</span></div>';
+                html += '</div></div>';
+            }
+
+            if (html) container.innerHTML = html;
+        }
 
         async function loadReport() {
             try {
@@ -533,8 +718,12 @@ enum DashboardHTML {
             URL.revokeObjectURL(url);
         });
 
-        // Auto-refresh every 10 seconds
-        setInterval(loadReport, 10000);
+        // Poll live status every 2 seconds
+        setInterval(pollLive, 2000);
+        // Refresh final report every 10 seconds
+        setInterval(function() { if (!isLive) loadReport(); }, 10000);
+        // Initial load
+        pollLive();
         loadReport();
     })();
     """

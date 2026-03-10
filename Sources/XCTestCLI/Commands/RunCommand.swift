@@ -62,7 +62,29 @@ struct RunCommand: AsyncParsableCommand {
             extraArgs: extraArgs
         )
 
-        let bundlePath = try TestRunner.runTests(config: config)
+        // Start server BEFORE tests if --serve is set, so dashboard shows live progress
+        var serverTask: Task<Void, Error>?
+        if serve {
+            let server = WebServer(reportPath: output, port: port)
+            serverTask = Task {
+                try await server.start()
+            }
+            // Give server a moment to start
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+
+        // Run tests on a background thread so we don't block the Vapor event loop
+        let capturedConfig = config
+        let bundlePath: String = try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    let result = try TestRunner.runTests(config: capturedConfig)
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
 
         // Step 2: Parse results
         let parser = XCResultParser(resultBundlePath: bundlePath)
@@ -78,10 +100,9 @@ struct RunCommand: AsyncParsableCommand {
         print()
         printSummary(report)
 
-        // Step 4: Optionally start server
-        if serve {
-            let server = WebServer(reportPath: output, port: port)
-            try await server.start()
+        // Step 4: Keep server running if started
+        if let task = serverTask {
+            try await task.value
         }
     }
 

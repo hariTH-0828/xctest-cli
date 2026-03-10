@@ -37,6 +37,17 @@ struct WebServer {
 
         app.get("health") { _ -> HTTPStatus in .ok }
 
+        app.get("api", "live") { req -> Response in
+            let snapshot = LiveTestState.shared.snapshot()
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let data = try encoder.encode(snapshot)
+            var headers = HTTPHeaders()
+            headers.add(name: .contentType, value: "application/json")
+            headers.add(name: .cacheControl, value: "no-cache")
+            return Response(status: .ok, headers: headers, body: .init(data: data))
+        }
+
         print()
         print("🌐 Dashboard server started!")
         print("   Open: http://127.0.0.1:\(port)")
